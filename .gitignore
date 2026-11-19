@@ -1,0 +1,25 @@
+# Java/Maven
+**/target/
+**/out/
+**/build/
+**/bin/
+*.class
+*.jar
+*.war
+*.zip
+*.exe
+*.log
+# IDE y sistema
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+# Ficheros de trabajo / pruebas locales
+.env
+.env.*
+!.env.example
+.evidence/
+__pycache__/
+*.pyc
+# Se incluyen solo las evidencias markdown verificadas, no logs locales
