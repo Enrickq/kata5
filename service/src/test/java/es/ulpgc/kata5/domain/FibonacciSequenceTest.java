@@ -14,7 +14,7 @@ class FibonacciSequenceTest {
     @Test void handlesLargestAllowedInputWithoutOverflow() {
         var result = sequence.first(90);
         assertEquals(90, result.size());
-        assertEquals(1779979416004714189L, result.getLast());
+        assertEquals(1779979416004714189L, result.getLast().longValue());
     }
     @Test void rejectsOutOfRange() {
         assertThrows(IllegalArgumentException.class, () -> sequence.first(0));
