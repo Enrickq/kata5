@@ -1,7 +1,7 @@
 package es.ulpgc.kata5.infrastructure.consul;
 
 import com.google.gson.Gson;
-import es.ulpgc.kata5.application.ServiceConfiguration;
+import es.ulpgc.kata5.config.ServiceConfiguration;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;

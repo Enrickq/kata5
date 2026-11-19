@@ -2,7 +2,7 @@ package es.ulpgc.kata5.infrastructure.http;
 
 import com.google.gson.Gson;
 import es.ulpgc.kata5.application.CalculationUseCase;
-import es.ulpgc.kata5.application.ServiceConfiguration;
+import es.ulpgc.kata5.config.ServiceConfiguration;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
 import java.util.Map;
@@ -22,7 +22,9 @@ public final class HttpApi {
         var app = Javalin.create(javalin -> javalin.showJavalinBanner = false);
         app.get("/health", ctx -> ctx.contentType("application/json")
                 .result(gson.toJson(Map.of("status", "UP", "node", config.nodeId()))));
-        app.get(useCase.route(), this::calculate);
+        String route = config.serviceName().equals("fibonacci")
+                ? "/api/v1/fibonacci" : "/api/v1/primes";
+        app.get(route, this::calculate);
         app.start("0.0.0.0", config.port());
         return app;
     }

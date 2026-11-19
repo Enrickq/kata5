@@ -1,6 +1,7 @@
 package es.ulpgc.kata5;
 
 import es.ulpgc.kata5.application.*;
+import es.ulpgc.kata5.config.ServiceConfiguration;
 import es.ulpgc.kata5.domain.*;
 import es.ulpgc.kata5.infrastructure.consul.ConsulRegistrar;
 import es.ulpgc.kata5.infrastructure.http.HttpApi;

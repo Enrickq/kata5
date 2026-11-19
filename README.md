@@ -64,7 +64,8 @@ kata5/
 │   └── src/main/java/es/ulpgc/kata5/
 │       ├── Main.java                # composición de dependencias y arranque
 │       ├── domain/                 # FibonacciSequence y PrimeNumbers (puros)
-│       ├── application/            # CalculationUseCase y adaptadores de uso
+│       ├── config/ServiceConfiguration.java # despliegue, fuera de dominio
+│       ├── application/            # CalculationUseCase y casos de uso
 │       └── infrastructure/
 │           ├── http/HttpApi.java    # entrada HTTP Javalin + JSON Gson
 │           └── consul/ConsulRegistrar.java # salida a Consul con sendAsync
@@ -85,7 +86,7 @@ kata5/
     └── evidencias/                    # salidas reales generadas al ejecutar
 ```
 
-Arquitectura ligera de **puertos y adaptadores**: el dominio no importa Javalin, Gson, HTTP, Docker ni Consul. El puerto `CalculationUseCase` separa los casos de uso del adaptador HTTP. `HttpApi` traduce/valida peticiones y prepara códigos y JSON; `ConsulRegistrar` aísla el registro y las llamadas de infraestructura; `Main` construye las dependencias. Cada pieza tiene una responsabilidad concreta, evitando herencia o abstracciones innecesarias. Las instancias de cada upstream ejecutan **el mismo código de cálculo**.
+Arquitectura ligera de **puertos y adaptadores**: el dominio no importa Javalin, Gson, HTTP, Docker ni Consul. El puerto `CalculationUseCase` separa los casos de uso del adaptador HTTP; las rutas HTTP solo existen en `HttpApi`, no en la aplicación. `HttpApi` traduce/valida peticiones y prepara códigos y JSON; `ConsulRegistrar` aísla el registro y las llamadas de infraestructura; `Main` construye las dependencias. Cada pieza tiene una responsabilidad concreta, evitando herencia o abstracciones innecesarias. Las instancias de cada upstream ejecutan **el mismo código de cálculo**.
 
 ## 4. Compilar y ejecutar
 

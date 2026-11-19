@@ -1,4 +1,4 @@
-package es.ulpgc.kata5.application;
+package es.ulpgc.kata5.config;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;

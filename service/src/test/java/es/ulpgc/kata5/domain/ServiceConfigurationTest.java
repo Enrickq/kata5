@@ -1,6 +1,6 @@
 package es.ulpgc.kata5.domain;
 
-import es.ulpgc.kata5.application.ServiceConfiguration;
+import es.ulpgc.kata5.config.ServiceConfiguration;
 import org.junit.jupiter.api.Test;
 import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
