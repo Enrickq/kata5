@@ -1,293 +1,271 @@
-# Kata 5 — Balanceo dinámico con NGINX y Consul
+# Kata 5 · Balanceo dinámico con NGINX y Consul
 
-**Ingeniería del Software II — ULPGC.** Implementación independiente de la Kata 5 conforme al **enunciado actualizado**: al menos dos upstreams dinámicos, dos réplicas por grupo, descubrimiento DNS SRV de Consul, comprobaciones de reparto/baja/alta sin recargar NGINX y **tres repeticiones reales** del despliegue. La base conceptual procede del ejemplo `kata5.zip` trabajado en clase, no de una modificación de la entrega anterior de Kata 4.
+Servicio de cálculo distribuido en dos grupos de réplicas: uno devuelve términos de la sucesión de Fibonacci y el otro, números primos. NGINX expone una ruta para cada grupo y distribuye las peticiones entre sus instancias. Consul registra los servicios, comprueba su estado y permite que NGINX descubra los destinos mediante DNS SRV.
 
-> **Estado de la entrega:** el código y los scripts de verificación se incluyen en el repositorio. Antes de entregar hay que **ejecutar Docker en el ordenador del estudiante**, realizar y versionar las tres repeticiones, grabar el vídeo de duración máxima de 7 minutos y sustituir el marcador del enlace real al vídeo. No se presentan pruebas de ejecución que aún no se hayan realizado.
+La incorporación o caída de una réplica se refleja en el balanceador sin cambiar las URL del cliente, editar la configuración ni recargar NGINX.
 
-**Vídeo explicativo (≤ 7 minutos):** `PENDIENTE: sustituir por enlace público real (YouTube) antes de entregar`. Guion: [`docs/guion-video.md`](docs/guion-video.md).
+## Vídeo de demostración
 
-## 1. Qué se ha construido
+[Ver la demostración de la Kata 5 en YouTube](https://youtu.be/m_Y3TVgMWnk)
 
-Dos operaciones deterministas: **los primeros `n` números de Fibonacci** y **los números primos hasta un límite**. Se ejecutan dos réplicas iniciales por operación. Cada instancia se registra al arrancar en Consul con un identificador único, nombre de servicio, IP accesible desde la red Docker, puerto y HTTP `GET /health`. NGINX usa **dos upstreams independientes** y descubre las réplicas sanas mediante consultas **DNS SRV**; el cliente solo conoce `localhost:8080`.
+## Arquitectura
 
 ```text
-Cliente Java / Python / curl
-           │ http://127.0.0.1:8080
-           ▼
-    NGINX 1.28.0 (puerto 80 en contenedor)
-           │                                      Consul 1.20.3
-           │              SRV + A, DNS:8600  ◀─── registro:8500
-           │                                      ▲        ▲
-           ├─ /api/v1/fibonacci ─ upstream fibonacci_pool  │
-           │     ├─ fibonacci-1 :8080 ──────────────────────┤ HTTP /health
-           │     ├─ fibonacci-2 :8080 ──────────────────────┤ (cada 2 s)
-           │     └─ fibonacci-3 :8080 (alta posterior) ─────┤
-           │                                                │
-           └─ /api/v1/primes ─ upstream primes_pool          │
-                 ├─ primes-1 :8080 ──────────────────────────┤
-                 └─ primes-2 :8080 ──────────────────────────┘
+                       Cliente HTTP
+                            |
+                     localhost:8080
+                            |
+                          NGINX <------ DNS SRV ------ Consul
+                            |                          /health
+                +-----------+-----------+
+                |                       |
+        fibonacci_pool              primes_pool
+                |                       |
+        +-------+-------+       +-------+-------+
+        |               |       |               |
+    fibonacci-1     fibonacci-2 primes-1      primes-2
+                        
+    fibonacci-3: réplica adicional para comprobar el alta dinámica
 ```
 
-NGINX y los cinco contenedores de infraestructura/servicio iniciales (1 Consul + 1 NGINX + 4 Java = **6 contenedores**) comparten la red privada Compose `kata5_kata5`. Las réplicas **no** publican sus puertos al anfitrión: son accesibles solo por la red Docker. `fibonacci-3` se añade explícitamente con el perfil `expansion` durante la prueba. Consul escucha la API HTTP en 8500 y DNS en 8600/UDP.
+Cada grupo tiene un nombre de servicio propio en Consul. Las réplicas de un mismo grupo comparten ese nombre, pero se registran con identificadores individuales. NGINX utiliza `zone`, `resolver` y `server ... service=... resolve` para consultar los registros SRV de Consul y actualizar los destinos disponibles.
 
-| Ruta pública | Upstream NGINX | Servicio DNS de Consul | Réplicas iniciales |
-|---|---|---|---|
-| `GET /api/v1/fibonacci?n=8` | `fibonacci_pool` | `fibonacci.service.consul` (`_fibonacci._tcp.service.consul`) | `fibonacci-1`, `fibonacci-2` |
-| `GET /api/v1/primes?limit=20` | `primes_pool` | `primes.service.consul` (`_primes._tcp.service.consul`) | `primes-1`, `primes-2` |
+| Ruta pública | Upstream NGINX | Nombre en Consul | Réplicas iniciales |
+| --- | --- | --- | --- |
+| `GET /api/v1/fibonacci?n=8` | `fibonacci_pool` | `fibonacci` | `fibonacci-1`, `fibonacci-2` |
+| `GET /api/v1/primes?limit=20` | `primes_pool` | `primes` | `primes-1`, `primes-2` |
 
-**Descubrimiento dinámico real:** `infra/nginx.conf` define `zone` por upstream y un servidor `service.consul service=fibonacci resolve` / `service.consul service=primes resolve`, junto a `resolver consul:8600 valid=2s ipv6=off`. Cada servicio anuncia su **IP interna Docker**, no `localhost` ni `host.docker.internal`. Consul publica solo réplicas con salud `passing` (configuración `only_passing: true`). **No hay scripts que reescriban la configuración de NGINX ni comandos `nginx -s reload`**. Se debe dar tiempo a los *health checks* (2 s), el TTL DNS (2 s) y la caché del resolver de NGINX (2 s; los tiempos efectivos pueden variar).
+`fibonacci-3` se incorpora durante la prueba de alta mediante el perfil `expansion` de Docker Compose. No sustituye la configuración de ninguno de los upstreams.
 
-## 2. Versiones y requisitos
+Todos los contenedores comparten la red privada `kata5_kata5`. Los servicios Java escuchan en el puerto `8080` de sus respectivos contenedores, sin publicar ese puerto en el equipo anfitrión. Solo NGINX recibe las peticiones externas del cliente.
 
-| Dependencia | Versión fijada o requerida |
-|---|---|
-| JDK de compilación / ejecución | **21** (OpenJDK / Eclipse Temurin) |
-| Maven | 3.9.x recomendada (dentro de imagen de construcción: **3.9.9**) |
-| Javalin | **6.7.0** |
-| Gson | **2.13.1** |
-| JUnit 5 | **5.11.4** |
-| NGINX Open Source | **1.28.0-alpine** (≥ 1.27.3, permite `resolve` en upstreams) |
-| Consul | **hashicorp/consul:1.20.3** (modo `-dev`, solo laboratorio) |
-| Docker | Docker Desktop/Engine reciente con **Compose v2** |
-| Python | **3.9+**, librería estándar, para verificación y repetición automatizadas |
+## Requisitos y versiones
 
-**Puertos publicados en el ordenador:** `127.0.0.1:8080/tcp` (NGINX), `127.0.0.1:8500/tcp` (API/UI Consul) y `127.0.0.1:8600/udp` (DNS Consul, para inspección). Todas las réplicas usan `8080/tcp` **dentro de sus contenedores independientes**. Se puede cambiar el puerto público de NGINX definiendo `PUBLIC_PORT` (ver apartado de Windows). Los `Dockerfile` realizan la compilación Maven en una fase separada y copian solo el JAR ejecutable a una imagen con JRE 21.
+| Componente | Versión |
+| --- | --- |
+| Java | JDK 21 |
+| Maven | 3.9.x (3.9.9 en la imagen de compilación) |
+| Javalin | 6.7.0 |
+| Gson | 2.13.1 |
+| JUnit | 5.11.4 |
+| NGINX | 1.28.0-alpine |
+| Consul | 1.20.3 |
+| Docker | Docker Engine/Desktop con Compose v2 |
+| Python | 3.9 o superior, sin paquetes adicionales |
 
-## 3. Estructura y responsabilidades
+Los puertos publicados en `127.0.0.1` son:
+
+| Puerto | Uso |
+| --- | --- |
+| `8080/tcp` | API pública de NGINX |
+| `8500/tcp` | API HTTP e interfaz de Consul |
+| `8600/udp` | Consultas DNS a Consul |
+
+NGINX 1.28.0 permite el descubrimiento dinámico de servidores con `resolve` en su versión de código abierto. Consul se ejecuta en modo de desarrollo, apropiado para esta práctica, no como configuración de producción.
+
+## Estructura del proyecto
 
 ```text
 kata5/
-├── pom.xml                          # Maven multi-módulo
+├── pom.xml                         Proyecto Maven multimódulo
+├── compose.yaml                    Servicios, red y réplicas
+├── client/                         Cliente Java con HttpClient.sendAsync
 ├── service/
-│   ├── Dockerfile                   # compilación multi-stage Java 21
-│   ├── pom.xml
-│   └── src/main/java/es/ulpgc/kata5/
-│       ├── Main.java                # composición de dependencias y arranque
-│       ├── domain/                 # FibonacciSequence y PrimeNumbers (puros)
-│       ├── config/ServiceConfiguration.java # despliegue, fuera de dominio
-│       ├── application/            # CalculationUseCase y casos de uso
-│       └── infrastructure/
-│           ├── http/HttpApi.java    # entrada HTTP Javalin + JSON Gson
-│           └── consul/ConsulRegistrar.java # salida a Consul con sendAsync
-├── client/
-│   └── src/main/java/es/ulpgc/kata5/client/Main.java # HttpClient.sendAsync
+│   ├── Dockerfile                   Compilación y ejecución con Java 21
+│   └── src/
+│       ├── main/java/es/ulpgc/kata5/
+│       │   ├── Main.java            Arranque y composición
+│       │   ├── domain/              Algoritmos de Fibonacci y primos
+│       │   ├── application/         Casos de uso y su interfaz
+│       │   ├── config/              Configuración del servicio
+│       │   └── infrastructure/
+│       │       ├── http/            Adaptador HTTP con Javalin y Gson
+│       │       └── consul/          Registro y baja en Consul
+│       └── test/                    Pruebas JUnit
 ├── infra/
-│   ├── nginx.conf                    # dos upstreams SRV dinámicos
-│   └── consul.json                   # DNS y salud
-├── compose.yaml                      # NGINX + Consul + 4 réplicas (+ 1 opcional)
+│   ├── nginx.conf                   Rutas y upstreams dinámicos
+│   └── consul.json                  Configuración DNS
 ├── scripts/
-│   ├── verify.py                     # test negro HTTP, 3 escenarios
-│   ├── repeticiones.py               # 3 despliegues reales Windows/Linux
-│   ├── repeticiones.sh               # envoltorio opcional Bash
-│   └── test_verify.py                # unit tests del verificador simulado
-└── docs/
-    ├── guion-video.md
-    ├── matriz-rubrica.md
-    └── evidencias/                    # salidas reales generadas al ejecutar
+│   ├── verify.py                    Verificación de los tres escenarios
+│   ├── repeticiones.py              Tres despliegues completos
+│   ├── repeticiones.sh              Entrada alternativa desde Bash
+│   └── test_verify.py               Pruebas del verificador
+└── docs/evidencias/                Registros de las tres ejecuciones
 ```
 
-Arquitectura ligera de **puertos y adaptadores**: el dominio no importa Javalin, Gson, HTTP, Docker ni Consul. El puerto `CalculationUseCase` separa los casos de uso del adaptador HTTP; las rutas HTTP solo existen en `HttpApi`, no en la aplicación. `HttpApi` traduce/valida peticiones y prepara códigos y JSON; `ConsulRegistrar` aísla el registro y las llamadas de infraestructura; `Main` construye las dependencias. Cada pieza tiene una responsabilidad concreta, evitando herencia o abstracciones innecesarias. Las instancias de cada upstream ejecutan **el mismo código de cálculo**.
+La lógica de cálculo no conoce Javalin, Gson ni Consul. Los casos de uso reciben los datos del dominio y el adaptador HTTP se ocupa de interpretar parámetros y construir respuestas. El registro en Consul está aislado en `ConsulRegistrar`, que utiliza peticiones HTTP asíncronas y reintentos cuando es necesario.
 
-## 4. Compilar y ejecutar
+## Puesta en marcha
 
-Con **Docker Desktop iniciado** y desde la raíz del repositorio:
+Los siguientes comandos se ejecutan **desde la raíz del repositorio**, donde se encuentra `compose.yaml`. En Windows se pueden utilizar directamente desde la terminal PowerShell de IntelliJ IDEA.
 
-```bash
-# Comprobación de Docker
- docker compose version
+Con Docker Desktop iniciado:
 
-# Construir imágenes, arrancar Consul, NGINX y 2+2 réplicas
- docker compose up -d --build --wait
-
-# Inspeccionar procesos, servicios y versiones
- docker compose ps
- docker compose exec -T nginx nginx -v
- docker compose exec -T nginx nginx -t
- docker compose exec -T consul consul catalog services
+```powershell
+docker compose up -d --build --wait
+docker compose ps
 ```
 
-El primer `docker compose up` requiere conexión a Docker Hub y Maven Central para descargar las imágenes y las dependencias Java; tarda más que las ejecuciones posteriores. NGINX puede iniciarse antes de que Consul haya marcado las réplicas como sanas: `scripts/verify.py` espera el período de convergencia en lugar de dar por fallida la prueba inmediatamente.
+La primera ejecución descarga las imágenes y dependencias necesarias. Una vez iniciado el sistema, la API queda disponible en `http://127.0.0.1:8080` y la interfaz de Consul en `http://127.0.0.1:8500/ui/`.
 
-En Windows **PowerShell**, los comandos `docker compose` son iguales. Para pruebas Python, usar `py -3 scripts/verify.py ...` si `python` no está en PATH. Para cambiar puerto público en PowerShell: `$env:PUBLIC_PORT = '8090'`; luego verificar con `--base http://127.0.0.1:8090`.
+Para comprobar la configuración y la versión activa de NGINX:
 
-Para compilar/probar Java **fuera de Docker**, si Maven y JDK 21 están instalados:
-
-```bash
-mvn -B clean verify
-mvn -B package
-java -jar client/target/client-1.0.0.jar http://127.0.0.1:8080 20
+```powershell
+docker compose exec -T nginx nginx -t
+docker compose exec -T nginx nginx -v
 ```
 
-Los JAR se generan localmente en `target/` y están excluidos por `.gitignore`: **nunca subir binarios al repositorio**.
+El puerto público puede cambiarse, por ejemplo, a `8090` antes del arranque:
 
-## 5. Contrato HTTP y errores previstos
-
-Consultar el balanceador, **no** las IP/puertos privados de las réplicas:
-
-```bash
-curl -i 'http://127.0.0.1:8080/api/v1/fibonacci?n=8'
-# HTTP/1.1 200 OK
-# X-Node: fibonacci-1   (o fibonacci-2, según balanceo)
-# X-Service: fibonacci
-# Content-Type: application/json
-# {"terms":8,"numbers":[0,1,1,2,3,5,8,13]}
-
-curl -i 'http://127.0.0.1:8080/api/v1/primes?limit=20'
-# HTTP/1.1 200 OK
-# X-Node: primes-1       (o primes-2)
-# X-Service: primes
-# {"limit":20,"count":8,"numbers":[2,3,5,7,11,13,17,19]}
-
-curl -i 'http://127.0.0.1:8080/api/v1/fibonacci?n=0'
-# HTTP/1.1 400 Bad Request; JSON: {"error":"n debe estar entre 1 y 90"}
-
-curl -i 'http://127.0.0.1:8080/api/v1/primes?limit=hola'
-# HTTP/1.1 400 Bad Request; JSON: {"error":"El parámetro limit debe ser un entero positivo"}
+```powershell
+$env:PUBLIC_PORT = "8090"
+docker compose up -d --build --wait
 ```
 
-Estas son **respuestas esperadas según el código**, no capturas de una prueba Docker realizada en este documento. `n` debe estar en `1..90`; `limit`, en `2..10000`. Se rechazan valores faltantes, inválidos, excesivos o fuera de rango. Las rutas no definidas producen `404`. La cabecera `X-Node` permite distinguir réplicas; `X-Service` confirma el grupo, y `X-Upstream-Address` facilita diagnosticar el backend real elegido por NGINX.
+En ese caso, las peticiones y el verificador deben apuntar a `http://127.0.0.1:8090`. Si se utiliza la configuración por defecto, el puerto es `8080`.
 
-## 6. Verificación manual completa (una repetición)
+## API HTTP
 
-Usa la **misma URL pública** antes y después de modificar réplicas.
+### Fibonacci
 
-**A. Reparto normal:** comprobar que aparecen los cuatro nodos y que los cálculos son idénticos en cada grupo:
-
-```bash
-python3 scripts/verify.py --scenario baseline
-# Windows: py -3 scripts/verify.py --scenario baseline
+```powershell
+curl.exe -i "http://127.0.0.1:8080/api/v1/fibonacci?n=8"
 ```
 
-El verificador realiza 24 solicitudes por ruta en cada intento, valida JSON, `X-Node`, `X-Service`, resultados, entrada inválida y la presencia de **ambas réplicas de cada grupo**. Si NGINX aún conserva una IP antigua o Consul sigue actualizando salud, espera y reintenta hasta 100 segundos antes de fallar claramente.
+Respuesta JSON:
 
-**B. Baja de una réplica Fibonacci:**
+```json
+{"terms":8,"numbers":[0,1,1,2,3,5,8,13]}
+```
 
-```bash
-# Guarda antes el ID del contenedor NGINX (debe ser idéntico al final)
-docker compose ps -q nginx
+### Números primos
 
+```powershell
+curl.exe -i "http://127.0.0.1:8080/api/v1/primes?limit=20"
+```
+
+Respuesta JSON:
+
+```json
+{"limit":20,"count":8,"numbers":[2,3,5,7,11,13,17,19]}
+```
+
+Ambas operaciones devuelven `200 OK`, `Content-Type: application/json` y las cabeceras `X-Service` y `X-Node`. Esta última identifica la réplica que atendió cada petición. NGINX añade `X-Upstream-Address` para facilitar el diagnóstico.
+
+Los parámetros están validados: `n` admite valores de **1 a 90** y `limit` de **2 a 10000**. Los valores inexistentes, no numéricos o fuera de rango producen `400 Bad Request` con un mensaje JSON. Por ejemplo:
+
+```powershell
+curl.exe -i "http://127.0.0.1:8080/api/v1/fibonacci?n=0"
+```
+
+```json
+{"error":"n debe estar entre 1 y 90"}
+```
+
+## Comprobación del balanceo
+
+El script `scripts/verify.py` realiza peticiones a las dos rutas y revisa los códigos HTTP, el JSON, las cabeceras de identificación y las réplicas que han respondido. También prueba entradas incorrectas. Espera durante la convergencia de Consul y DNS, por lo que un cambio de estado no necesita reflejarse en la primera solicitud.
+
+**1. Reparto inicial.** Deben aparecer `fibonacci-1`, `fibonacci-2`, `primes-1` y `primes-2`:
+
+```powershell
+py -3 scripts/verify.py --scenario baseline
+```
+
+**2. Baja de una réplica.** Se detiene `fibonacci-2`; Fibonacci sigue disponible por `fibonacci-1`, mientras que Primes mantiene sus dos instancias:
+
+```powershell
+$nginxAntes = docker compose ps -q nginx
 docker compose stop fibonacci-2
-python3 scripts/verify.py --scenario down
-# Solo fibonacci-1 debe contestar Fibonacci; primes-1 y primes-2 siguen disponibles.
+py -3 scripts/verify.py --scenario down
 ```
 
-**C. Alta de una réplica NUEVA (no basta reactivar la anterior):**
+**3. Alta de otra réplica.** Se incorpora `fibonacci-3` sin modificar `nginx.conf`:
 
-```bash
+```powershell
 docker compose --profile expansion up -d fibonacci-3
-python3 scripts/verify.py --scenario up
-# Deben contestar fibonacci-1 y fibonacci-3; primes-1 y primes-2 siguen disponibles.
-
-docker compose ps -q nginx
-# Comprueba el mismo ID antes/después. No se ha ejecutado nginx -s reload.
+py -3 scripts/verify.py --scenario up
+$nginxAntes -eq (docker compose ps -q nginx)
 ```
 
-**D. Restaurar antes de repetir:**
+La última expresión devuelve `True` si NGINX conserva el mismo contenedor desde el inicio de la prueba.
 
-```bash
+**4. Restauración.** Se retira la tercera réplica y vuelve a arrancar la segunda:
+
+```powershell
 docker compose --profile expansion stop fibonacci-3
 docker compose start fibonacci-2
-python3 scripts/verify.py --scenario baseline
+py -3 scripts/verify.py --scenario baseline
 ```
 
-Consultar Consul (su UI se abre en `http://127.0.0.1:8500`) y los registros reales:
+La salud de las instancias también puede consultarse en Consul:
 
-```bash
-docker compose exec -T consul consul catalog services
-# HTTP devuelve el estado y las direcciones de las instancias que están pasando checks:
-curl 'http://127.0.0.1:8500/v1/health/service/fibonacci?passing=1'
-curl 'http://127.0.0.1:8500/v1/health/service/primes?passing=1'
-# Si tienes dig en tu equipo/WSL: consultar directamente el DNS SRV publicado por Consul:
-dig @127.0.0.1 -p 8600 -t SRV fibonacci.service.consul
-dig @127.0.0.1 -p 8600 -t SRV primes.service.consul
+```powershell
+curl.exe "http://127.0.0.1:8500/v1/health/service/fibonacci?passing=1"
+curl.exe "http://127.0.0.1:8500/v1/health/service/primes?passing=1"
 ```
 
-**Diagnóstico si falla algo:** `docker compose logs consul`, `docker compose logs nginx`, `docker compose logs fibonacci-1`; `docker compose exec -T nginx nginx -t`. No confundas una propagación DNS de unos segundos con un fallo permanente. Comprueba que se usa NGINX ≥ 1.27.3, Docker está en modo *Linux containers*, el puerto público no está ocupado y Consul ve las IP internas, no `localhost`.
+## Repeticiones y resultados
 
-## 7. TRES repeticiones deliberadas y evidencia reproducible
+Se realizaron **tres despliegues completos** con `scripts/repeticiones.py`. En cada uno se reinició el entorno y se verificaron el reparto inicial, la baja de `fibonacci-2`, el alta de `fibonacci-3`, la continuidad del otro grupo y la restauración. La configuración de NGINX permaneció sin cambios durante cada ciclo; el script comprobó además que su identificador de contenedor no cambiaba.
 
-El profesor exige **tres ejecuciones completas**, cada una con (1) despliegue, (2) reparto, (3) baja, (4) incorporación de réplica y (5) restauración. No es suficiente ejecutar tres veces la consulta `curl` ni compartir el mismo registro de una prueba.
+No se introdujeron variaciones entre repeticiones: se mantuvieron los mismos servicios, rutas, réplicas y condiciones de prueba para poder comparar los resultados.
 
-En **PowerShell** (Windows):
+| Repetición | Resultado | Registro |
+| --- | --- | --- |
+| 1 | PASS | [repeticion-1.md](docs/evidencias/repeticion-1.md) |
+| 2 | PASS | [repeticion-2.md](docs/evidencias/repeticion-2.md) |
+| 3 | PASS | [repeticion-3.md](docs/evidencias/repeticion-3.md) |
+
+Los registros contienen los comandos ejecutados, la salida de las verificaciones y la identificación de los contenedores. Cada repetición quedó recogida también en un commit independiente.
+
+Para reproducir los tres ciclos desde cero en Windows:
 
 ```powershell
 py -3 scripts/repeticiones.py
 ```
 
-En Linux, macOS o WSL:
+El comando elimina y vuelve a crear el despliegue entre iteraciones; por ello conviene usarlo en un entorno de pruebas. Si alguna comprobación falla, el script se interrumpe en lugar de marcar la repetición como correcta.
 
-```bash
-python3 scripts/repeticiones.py
-# o: bash scripts/repeticiones.sh
-```
+## Pruebas y compilación local
 
-El programa detiene el despliegue anterior entre rondas y ejecuta **3 ciclos completos**, comprueba que el identificador del contenedor NGINX no cambia **dentro** de cada ciclo y valida las dos rutas en todos los escenarios. Escribe únicamente resultados **observados**, con fecha UTC y comandos, en:
+Con JDK 21 y Maven instalados:
 
-- `docs/evidencias/repeticion-1.md`
-- `docs/evidencias/repeticion-2.md`
-- `docs/evidencias/repeticion-3.md`
-
-Si alguna comprobación falla, el script interrumpe la ejecución y registra un **FALLO**, sin fabricar un PASS. Los tres ciclos usan la misma topología y nombres, sin variación opcional (el enunciado permite, pero no exige, introducirla). Con `--port 8090` se puede elegir otro puerto público al lanzar **una ejecución de las tres repeticiones**.
-
-Después de ejecutar realmente las tres repeticiones, **registra el proceso en commits identificables**. Ejemplo (no ejecutar hasta que existan las evidencias reales):
-
-```bash
-git add docs/evidencias/repeticion-1.md
-git commit -m "test: kata5 repeticion 1 balanceo baja alta"
-git add docs/evidencias/repeticion-2.md
-git commit -m "test: kata5 repeticion 2 balanceo baja alta"
-git add docs/evidencias/repeticion-3.md
-git commit -m "test: kata5 repeticion 3 balanceo baja alta"
-```
-
-La historia de desarrollo ya contiene commits de estructura, implementación, verificadores y documentación; **no sustituye** estos tres commits de las repeticiones ejecutadas. Es conveniente grabar fragmentos de al menos una ejecución completa para el vídeo y enseñar el historial real de los tres ciclos.
-
-## 8. Pruebas automatizadas y evidencias
-
-```bash
-# JUnit 5: lógica de dominio pura y configuración de infraestructura
+```powershell
 mvn -B clean test
-
-# Pruebas unitarias del verificador con un servidor HTTP simulado:
-python3 -m unittest discover -s scripts -p 'test_*.py' -v
-
-# Verificación de integración REAL (requiere Docker)
-python3 scripts/verify.py --scenario baseline
-python3 scripts/repeticiones.py
+mvn -B package
 ```
 
-**Diferencia fundamental:** las pruebas JUnit y las del servidor simulado verifican algoritmos e instrumentos de prueba; **no demuestran** que NGINX/Consul funcionen juntos. La prueba de integración real es `verify.py` contra NGINX durante `repeticiones.py`, y sus tres evidencias documentadas deben adjuntarse al repositorio después de ejecutarlas en Docker. El caso de corte de todas las réplicas del mismo grupo no es requisito funcional; si ocurre, el proxy no puede responder exitosamente (es normal recibir `502/503`).
+Las pruebas JUnit cubren los cálculos y la validación de configuración. El verificador HTTP dispone además de pruebas con un servidor simulado:
 
-## 9. Detener, limpiar y volver a comenzar
-
-```bash
-# Apagar también la réplica opcional del perfil expansion
- docker compose --profile expansion down -v --remove-orphans
+```powershell
+py -3 -m unittest discover -s scripts -p "test_*.py" -v
 ```
 
-No guardar archivos `target`, `.jar`, `.class`, `.idea`, credenciales ni rutas personales. `.gitignore` los excluye. El repositorio debe llamarse **`kata5`**, ser **público** y tener su versión final evaluable en la rama **`main`**.
+El cliente Java puede ejecutarse después de compilar el proyecto, con NGINX levantado:
 
-Al crear el repositorio vacío en GitHub, SIN inicializarlo con otro README (si ya tienes este proyecto local):
-
-```bash
-git remote add origin https://github.com/Enrickq/kata5.git
-git branch -M main
-git push -u origin main
+```powershell
+java -jar client/target/client-1.0.0.jar http://127.0.0.1:8080 20
 ```
 
-Si el repositorio ya contiene un remoto, comprueba `git remote -v` antes de añadirlo. No reutilices ni sobrescribas `kata4` ni `kata3`; son entregas independientes.
+Envía varias solicitudes asíncronas a ambas rutas y muestra el nodo y la respuesta de cada una. Los directorios `target/` y los archivos compilados están excluidos del repositorio mediante `.gitignore`.
 
-## 10. Vídeo (máximo 7 minutos) y criterios de entrega
+Para consultar posibles problemas de arranque:
 
-Graba la pantalla explicando **por qué** hay dos upstreams, `zone`, registros DNS SRV, `resolve` y `resolver`, qué hace Consul con `/health`, cómo se identifica la réplica por `X-Node`, qué cambia sin tocar NGINX, y cómo quedan demostradas las **tres repeticiones** en Git. Enseña las verificaciones reales, no solo una explicación verbal. Guion completo: [`docs/guion-video.md`](docs/guion-video.md). Al subir el vídeo a YouTube, reemplaza el marcador al inicio de este README por su URL real y comprueba que se puede abrir.
+```powershell
+docker compose logs nginx
+docker compose logs consul
+docker compose logs fibonacci-1
+```
 
-Matriz requisito → archivo → prueba: [`docs/matriz-rubrica.md`](docs/matriz-rubrica.md).
+Para detener todo el entorno, incluida la réplica opcional:
 
-Checklist final: dominio aislado ✅; dos rutas/upstreams configurados ✅; 2+2 réplicas definidas ✅; Consul + health + DNS SRV configurados ✅; cambio dinámico sin edición de NGINX implementado ✅; cliente Java y script de prueba ✅; tres ejecuciones y evidencias reales **pendientes hasta ejecutarse**; vídeo público **pendiente**; publicación GitHub **pendiente**. Los apartados marcados como configurados no constituyen una certificación de ejecución real del stack.
+```powershell
+docker compose --profile expansion down
+```
 
-## Referencias técnicas
+## Documentación técnica
 
-- [NGINX: módulo upstream HTTP (`server service=... resolve`, `zone`, `resolver`)](https://nginx.org/en/docs/http/ngx_http_upstream_module.html)
-- [Consul: consulta DNS y registros SRV](https://developer.hashicorp.com/consul/docs/discover/service/static)
-- [Consul: configuración de `only_passing` y TTL](https://developer.hashicorp.com/consul/docs/reference/agent/configuration-file/dns)
-- [Javalin: documentación](https://javalin.io/documentation)
+- [NGINX: configuración de upstreams](https://nginx.org/en/docs/http/ngx_http_upstream_module.html)
+- [Consul: descubrimiento de servicios por DNS](https://developer.hashicorp.com/consul/docs/discover/service/static)
+- [Javalin](https://javalin.io/documentation)

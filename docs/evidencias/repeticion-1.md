@@ -216,7 +216,7 @@ $ docker compose exec -T nginx nginx -v
 nginx version: nginx/1.28.0
 $ docker compose ps -q nginx
 6420796c66845e6bd7cae4d6718c63ae5a0dc1d5a933feaa71e605430934bac1
-$ C:\Users\enrif\AppData\Local\Programs\Python\Python313\python.exe scripts/verify.py --scenario baseline --base http://127.0.0.1:8080
+$ py -3 scripts/verify.py --scenario baseline --base http://127.0.0.1:8080
   espera de salud/DNS (baseline), intento 1: fibonacci: se esperaban réplicas ['fibonacci-1', 'fibonacci-2'] y respondieron ['fibonacci-1']
 {
   "counts": {
@@ -235,7 +235,7 @@ $ C:\Users\enrif\AppData\Local\Programs\Python\Python313\python.exe scripts/veri
 $ docker compose stop fibonacci-2
  Container kata5-fibonacci-2-1 Stopping 
  Container kata5-fibonacci-2-1 Stopped 
-$ C:\Users\enrif\AppData\Local\Programs\Python\Python313\python.exe scripts/verify.py --scenario down --base http://127.0.0.1:8080
+$ py -3 scripts/verify.py --scenario down --base http://127.0.0.1:8080
   espera de salud/DNS (down), intento 1: Expecting value: line 1 column 1 (char 0)
 {
   "counts": {
@@ -264,7 +264,7 @@ $ docker compose --profile expansion up -d fibonacci-3
  Container kata5-consul-1 Healthy 
  Container kata5-fibonacci-3-1 Starting 
  Container kata5-fibonacci-3-1 Started 
-$ C:\Users\enrif\AppData\Local\Programs\Python\Python313\python.exe scripts/verify.py --scenario up --base http://127.0.0.1:8080
+$ py -3 scripts/verify.py --scenario up --base http://127.0.0.1:8080
   espera de salud/DNS (up), intento 1: fibonacci: se esperaban réplicas ['fibonacci-1', 'fibonacci-3'] y respondieron ['fibonacci-1']
 {
   "counts": {
@@ -290,7 +290,7 @@ $ docker compose start fibonacci-2
  Container kata5-consul-1 Healthy 
  Container kata5-fibonacci-2-1 Starting 
  Container kata5-fibonacci-2-1 Started 
-$ C:\Users\enrif\AppData\Local\Programs\Python\Python313\python.exe scripts/verify.py --scenario baseline --base http://127.0.0.1:8080
+$ py -3 scripts/verify.py --scenario baseline --base http://127.0.0.1:8080
   espera de salud/DNS (baseline), intento 1: fibonacci: se esperaban réplicas ['fibonacci-1', 'fibonacci-2'] y respondieron ['fibonacci-1']
 {
   "counts": {
