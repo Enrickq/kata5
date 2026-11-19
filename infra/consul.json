@@ -1,0 +1,6 @@
+{
+  "dns_config": {
+    "only_passing": true,
+    "service_ttl": {"*": "2s"}
+  }
+}

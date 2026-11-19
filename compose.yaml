@@ -1,0 +1,89 @@
+name: kata5
+
+x-app: &app
+  image: kata5-service:local
+  build:
+    context: .
+    dockerfile: service/Dockerfile
+  depends_on:
+    consul:
+      condition: service_healthy
+  networks: [kata5]
+  # La salud real para el tráfico la comprueba Consul mediante HTTP /health.
+
+services:
+  consul:
+    image: hashicorp/consul:1.20.3
+    command: ["agent", "-dev", "-client=0.0.0.0", "-config-file=/consul/config/consul.json"]
+    volumes:
+      - ./infra/consul.json:/consul/config/consul.json:ro
+    ports:
+      - "127.0.0.1:8500:8500"
+      - "127.0.0.1:8600:8600/udp"
+    networks: [kata5]
+    healthcheck:
+      test: ["CMD", "consul", "operator", "raft", "list-peers"]
+      interval: 3s
+      timeout: 2s
+      retries: 25
+
+  nginx:
+    image: nginx:1.28.0-alpine
+    depends_on:
+      consul:
+        condition: service_healthy
+    volumes:
+      - ./infra/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:${PUBLIC_PORT:-8080}:80"
+    networks: [kata5]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 25
+
+  fibonacci-1:
+    <<: *app
+    environment:
+      SERVICE_NAME: fibonacci
+      NODE_ID: fibonacci-1
+      CONSUL_URL: http://consul:8500
+      PORT: "8080"
+
+  fibonacci-2:
+    <<: *app
+    environment:
+      SERVICE_NAME: fibonacci
+      NODE_ID: fibonacci-2
+      CONSUL_URL: http://consul:8500
+      PORT: "8080"
+
+  primes-1:
+    <<: *app
+    environment:
+      SERVICE_NAME: primes
+      NODE_ID: primes-1
+      CONSUL_URL: http://consul:8500
+      PORT: "8080"
+
+  primes-2:
+    <<: *app
+    environment:
+      SERVICE_NAME: primes
+      NODE_ID: primes-2
+      CONSUL_URL: http://consul:8500
+      PORT: "8080"
+
+  fibonacci-3:
+    <<: *app
+    profiles: [expansion]
+    environment:
+      SERVICE_NAME: fibonacci
+      NODE_ID: fibonacci-3
+      CONSUL_URL: http://consul:8500
+      PORT: "8080"
+
+networks:
+  kata5:
+    driver: bridge
