@@ -4,6 +4,8 @@ Servicio de cálculo distribuido en dos grupos de réplicas: uno devuelve térmi
 
 La incorporación o caída de una réplica se refleja en el balanceador sin cambiar las URL del cliente, editar la configuración ni recargar NGINX.
 
+La versión final evaluable está en la rama `main`. Consulta la [matriz de rúbrica](docs/matriz-rubrica.md) para ver las evidencias de cada criterio.
+
 ## Vídeo de demostración
 
 [Ver la demostración de la Kata 5 en YouTube](https://youtu.be/m_Y3TVgMWnk)
