@@ -1,31 +1,29 @@
-# Matriz de trazabilidad — enunciado ACTUALIZADO Kata 5
+# Kata 5 · Requisitos y evidencias
 
-Distinguir entre **implementación preparada** y **verificación real ejecutada**. No confundir el cumplimiento estático con un resultado de Docker.
+La versión final evaluable está en la rama `main`. El [README](../README.md) contiene las instrucciones para compilar, arrancar y verificar el proyecto. El [vídeo de demostración](https://youtu.be/m_Y3TVgMWnk) dura 6 minutos y 35 segundos.
 
-| Requisito textual | Evidencia en el repositorio | Pendiente de demostrar en ejecución |
+## Arquitectura y funcionamiento
+
+| Requisito | Implementación | Evidencia |
 |---|---|---|
-| Dos `upstream`, cada uno con ruta pública | `infra/nginx.conf`: `fibonacci_pool` + `primes_pool` | `verify.py --scenario baseline` |
-| Descubrimiento `zone`, `resolver`, `service`, `resolve`, DNS SRV | `infra/nginx.conf`, `infra/consul.json` | `nginx -t`, consulta DNS SRV y prueba de cambio |
-| NGINX libre ≥ 1.27.3 | `compose.yaml`: `nginx:1.28.0-alpine` | `docker compose exec -T nginx nginx -v` |
-| ≥2 réplicas por upstream | `compose.yaml`: cuatro instancias iniciales con nombre y ID únicos | `verify.py` identifica las cuatro |
-| Registro en Consul de dirección y puerto alcanzables | `ConsulRegistrar` anuncia dirección IPv4 del contenedor | API `/v1/health/service/...?passing=1` |
-| HTTP /health por réplica; control de salud | `HttpApi`, `ConsulRegistrar`, `infra/consul.json` | Consul UI / catálogo y baja |
-| Eliminar una réplica sin editar o recargar NGINX | `compose stop fibonacci-2`, `service=... resolve` | `--scenario down` con NGINX ID constante |
-| Incorporar nueva réplica sin editar o recargar NGINX | perfil `expansion`: `fibonacci-3` | `--scenario up` con NGINX ID constante |
-| Independencia de las rutas y cálculos consistentes | Casos de uso distintos en dominio y en NGINX | Comparación HTTP entre réplicas de cada pool |
-| Cliente o script de múltiples consultas y X-Node | `client/Main.java`, `scripts/verify.py` | Ejecutar y mostrar salidas por réplica |
-| Repetir el mismo despliegue tres veces | `scripts/repeticiones.py` | **Ejecutar de verdad** y registrar las 3 evidencias y 3 commits |
-| Tests, entradas inválidas y bordes | `service/src/test`, `scripts/test_verify.py`, `verify.py` | Ejecutar Maven/JUnit e integración Docker |
-| README versiones, puertos, topología, comandos y reproducibilidad | `README.md`, este documento | Comprobar ejecución en equipo propio |
-| Repo público `kata5`, main, Git, sin binarios | `.gitignore`, historial del proyecto | Publicar `https://github.com/Enrickq/kata5` después de revisar el remoto |
-| Vídeo ≤ 7 minutos con decisiones, proceso y pruebas | `docs/guion-video.md` | **Grabar y publicar** vídeo real, añadir URL al README |
+| Dos grupos de servicios con rutas públicas independientes | [nginx.conf](../infra/nginx.conf) dirige `/api/v1/fibonacci` a `fibonacci_pool` y `/api/v1/primes` a `primes_pool`. | [Configuración de NGINX en el vídeo · 01:05](https://youtu.be/m_Y3TVgMWnk?t=65) |
+| Al menos dos réplicas por grupo | [compose.yaml](../compose.yaml) define `fibonacci-1`, `fibonacci-2`, `primes-1` y `primes-2`. | En la [prueba inicial · 02:25](https://youtu.be/m_Y3TVgMWnk?t=145) aparecen las cuatro réplicas atendiendo peticiones. |
+| Descubrimiento dinámico con NGINX y Consul | Se utiliza NGINX `1.28.0-alpine`. Cada upstream tiene su propia `zone` y consulta los registros DNS SRV de Consul mediante `resolver`, `service` y `resolve`. | [Configuración de NGINX](../infra/nginx.conf) y [configuración DNS de Consul](../infra/consul.json). Los registros de las repeticiones incluyen `nginx -t` y `nginx -v`. |
+| Registro y comprobación de salud | Cada instancia registra en Consul su identificador, dirección y puerto. Consul comprueba el endpoint `/health`. | [Registro de instancias en Java](../service/src/main/java/es/ulpgc/kata5/infrastructure/consul/ConsulRegistrar.java) y [vista de servicios en Consul · 04:35](https://youtu.be/m_Y3TVgMWnk?t=275). |
+| Baja de una réplica | Se detiene `fibonacci-2`. Las peticiones a Fibonacci continúan a través de `fibonacci-1` y Primes conserva sus dos réplicas. | [Prueba de baja · 03:05](https://youtu.be/m_Y3TVgMWnk?t=185) y escenario `down` en los tres registros. |
+| Alta de una nueva réplica | El perfil `expansion` incorpora `fibonacci-3`. NGINX empieza a repartir las peticiones entre `fibonacci-1` y `fibonacci-3` con la misma URL pública. | [Prueba de alta · 03:45](https://youtu.be/m_Y3TVgMWnk?t=225) y escenario `up` en los tres registros. |
+| Continuidad de NGINX durante los cambios | La secuencia de baja y alta se realiza sin editar `nginx.conf` ni ejecutar una recarga. Se compara el identificador del contenedor NGINX antes y después. | La comparación devuelve `True` en el vídeo. El [script de repeticiones](../scripts/repeticiones.py) también comprueba que el identificador se mantiene. |
+| Verificación de respuestas y aislamiento de los grupos | El [cliente Java](../client/src/main/java/es/ulpgc/kata5/client/Main.java) envía peticiones asíncronas. El [verificador HTTP](../scripts/verify.py) comprueba el JSON, las cabeceras `X-Service` y `X-Node` y las réplicas que responden en cada ruta. | Los escenarios `baseline`, `down` y `up` muestran qué nodos responden en cada grupo. |
+| Validación de entradas y pruebas | El servicio devuelve HTTP `400` ante parámetros inválidos. El repositorio incluye [pruebas JUnit](../service/src/test/) y [pruebas del verificador](../scripts/test_verify.py). | En el [bloque de control de errores · 04:35](https://youtu.be/m_Y3TVgMWnk?t=275) se muestra la respuesta a `fibonacci?n=0`. El README incluye los comandos para ejecutar las pruebas. |
 
-## Evidencias generadas en un equipo con Docker
+## Tres repeticiones completas
 
-Tras completar `py -3 scripts/repeticiones.py` o `python3 scripts/repeticiones.py`:
+En cada repetición se desplegó el entorno, se comprobó el reparto inicial, se detuvo `fibonacci-2`, se incorporó `fibonacci-3` y se restauró el estado inicial. Se mantuvieron los mismos servicios, rutas y condiciones para comparar los resultados.
 
-- `docs/evidencias/repeticion-1.md`: despliegue, reparto, baja, alta, restauración.
-- `docs/evidencias/repeticion-2.md`: misma secuencia de nuevo, datos reales.
-- `docs/evidencias/repeticion-3.md`: tercera secuencia, datos reales.
+| Repetición | Registro de ejecución | Resultado final | Commit |
+|---|---|---|---|
+| 1 | [repeticion-1.md](evidencias/repeticion-1.md) | `PASS` | [`cd31e91`](https://github.com/Enrickq/kata5/commit/cd31e91400fd3dc5c8e3766fd644873a47cf087b) |
+| 2 | [repeticion-2.md](evidencias/repeticion-2.md) | `PASS` | [`a16d1a5`](https://github.com/Enrickq/kata5/commit/a16d1a59abc7a49cb677ca0e218d6e6447d52f8b) |
+| 3 | [repeticion-3.md](evidencias/repeticion-3.md) | `PASS` | [`b42b172`](https://github.com/Enrickq/kata5/commit/b42b17283590bbdf487d4e6ca89ebcb24ce5db46) |
 
-No añadir ejemplos inventados de salidas `PASS`. Cualquier fichero con estado de fallo deberá corregirse mediante una nueva ejecución antes de confirmar una repetición.
+Las tres evidencias y sus commits se muestran en el [vídeo a partir de 05:10](https://youtu.be/m_Y3TVgMWnk?t=310).
